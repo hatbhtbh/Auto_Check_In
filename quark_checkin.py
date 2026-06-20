@@ -1,5 +1,5 @@
 '''
-new Env('Quark签到')
+new Env('夸克自动签到')
 cron: 0 8 * * *
 
 V2版-目前有效
