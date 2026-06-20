@@ -205,16 +205,16 @@ def main():
     :return: 返回一个字符串，包含签到结果
     '''
     msg = ""
-    global QUARK_COOKIE
-    QUARK_COOKIE = get_env()
+    global quark_cookie
+    quark_cookie = get_env()
 
-    print("✅ 检测到共", len(QUARK_COOKIE), "个夸克账号\n")
+    print("✅ 检测到共", len(quark_cookie), "个夸克账号\n")
 
     i = 0
-    while i < len(QUARK_COOKIE):
+    while i < len(quark_cookie):
         # 获取user_data参数
         user_data = {}  # 用户信息
-        for a in QUARK_COOKIE[i].replace(" ", "").split(';'):
+        for a in quark_cookie[i].replace(" ", "").split(';'):
             if not a == '':
                 user_data.update({a[0:a.index('=')]: a[a.index('=') + 1:]})
         
