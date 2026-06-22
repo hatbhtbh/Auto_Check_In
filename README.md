@@ -16,27 +16,7 @@
 
 | 变量名           | 说明           | 是否必需       | 示例值               | 备注                      |
 | ---------------- | -------------- | -------------- | -------------------- | ------------------------- |
-| `QUARK_COOKIE` | 夸克网盘Cookie | **必需** | `cookie1&&cookie2` | 多账号用 `&&`或回车分隔 |
-
-### 🍪 Cookie获取方式
-
-#### 恩山论坛 Cookie
-
-1. 浏览器访问 [恩山论坛](https://www.right.com.cn/FORUM/) 并登录
-2. F12 开发者工具 → Network → 刷新页面
-3. 找到请求头中的 `Cookie` 完整复制
-
-#### NodeSeek Cookie
-
-1. 浏览器访问 [nodeseek.com](https://www.nodeseek.com) 并登录
-2. F12 开发者工具 → Network → 刷新页面
-3. 找到请求头中的 `Cookie` 完整复制
-
-#### 夸克网盘 Cookie
-
-1. 浏览器访问 [夸克网盘](https://pan.quark.cn/) 并登录
-2. F12 开发者工具 → Network → 刷新页面
-3. 找到请求头中的 `Cookie` 完整复制
+| `COOKIE_QUARK` | 夸克网盘Cookie | **必需** | `kps sign vcode` | 多账号用 `&&`或回车分隔 |
 
 ## 📄 许可证
 
