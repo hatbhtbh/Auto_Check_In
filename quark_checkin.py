@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 cron "0 8 * * *" script-path=checkIn_Quark.py,tag=匹配cron用
 new Env('夸克自动签到')
@@ -28,7 +29,7 @@ except ImportError:
 
 # 配置项 - 同时兼容大写 QUARK_COOKIE 和小写 quark_cookie
 quark_cookie = os.environ.get('QUARK_COOKIE') or os.environ.get('quark_cookie', '')
-max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "3600"))
+max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "600"))
 random_signin = os.getenv("RANDOM_SIGNIN", "true").lower() == "true"
 privacy_mode = os.getenv("PRIVACY_MODE", "true").lower() == "true"
 
@@ -90,40 +91,12 @@ def notify_user(title, content):
         print(f"📢 {title}\n📄 {content}")
 
 def parse_cookies(cookie_str):
-    """解析Cookie字符串，支持多账号"""
+    """解析Cookie字符串，支持多账号 (以 && 或 换行 分隔)"""
     if not cookie_str:
         return []
-    lines = cookie_str.strip().split('\n')
-    cookies = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split('&&')
-        for part in parts:
-            part = part.strip()
-            if part:
-                cookies.append(part)
-    unique_cookies = []
-    for cookie in cookies:
-        if cookie and cookie not in unique_cookies:
-            unique_cookies.append(cookie)
-    return unique_cookies
-
-def extract_params(url):
-    """从URL中提取所需的参数"""
-    query_start = url.find('?')
-    query_string = url[query_start + 1:] if query_start != -1 else ''
-    params = {}
-    for param in query_string.split('&'):
-        if '=' in param:
-            key, value = param.split('=', 1)
-            params[key] = value
-    return {
-        'kps': params.get('kps', ''),
-        'sign': params.get('sign', ''),
-        'vcode': params.get('vcode', '')
-    }
+    # 兼容换行和 && 分隔多账号
+    lines = cookie_str.strip().replace('\n', '&&').split('&&')
+    return [line.strip() for line in lines if line.strip()]
 
 class QuarkSigner:
     name = "夸克网盘"
@@ -133,21 +106,28 @@ class QuarkSigner:
         self.session = requests.Session()
         self.param = {}
         
-        # 标准化分隔符，防范由于空格导致解析失败
-        normalized_str = cookie_str.replace(' ', ';')
-        while ';;' in normalized_str:
-            normalized_str = normalized_str.replace(';;', ';')
-            
-        # 解析该账号的参数
-        for a in normalized_str.split(';'):
-            if a and '=' in a:
-                self.param.update({a[0:a.index('=')]: a[a.index('=') + 1:]})
+        # 使用高精度的正则表达式提取字段，防止 Base64 编码中的 '+' 和 '=' 导致解析错乱
+        def regex_find(key, src):
+            match = re.search(rf'{key}\s*=\s*([^;]+)', src)
+            return match.group(1).strip() if match else ''
+
+        # 精准提取各个核心字段
+        self.param['user'] = regex_find('user', cookie_str)
+        self.param['kps'] = regex_find('kps', cookie_str)
+        self.param['sign'] = regex_find('sign', cookie_str)
+        self.param['vcode'] = regex_find('vcode', cookie_str)
         
-        if 'url' in self.param:
-            url_params = extract_params(self.param['url'])
-            self.param.update(url_params)
-            
-        self.user_alias = self.param.get('user', f"账号{self.index}")
+        # 兼容备用格式：如果直接传入了带 url= 的特殊网页链接
+        if 'url=' in cookie_str and not self.param['kps']:
+            url_match = re.search(r'url=([^;&]+)', cookie_str)
+            if url_match:
+                url_str = url_match.group(1)
+                self.param['kps'] = re.search(r'kps=([^&]+)', url_str).group(1) if 'kps=' in url_str else ''
+                self.param['sign'] = re.search(r'sign=([^&]+)', url_str).group(1) if 'sign=' in url_str else ''
+                self.param['vcode'] = re.search(r'vcode=([^&]+)', url_str).group(1) if 'vcode=' in url_str else ''
+
+        # 设置账号别名
+        self.user_alias = self.param.get('user') if self.param.get('user') else f"账号{self.index}"
 
     def convert_bytes(self, b):
         """将字节转换为 MB GB TB"""
@@ -208,7 +188,7 @@ class QuarkSigner:
         # 1. 获取签到前信息
         growth_info = self.get_growth_info()
         if not growth_info:
-            error_msg = "❌ 签到异常: 获取网盘成长信息失败，可能是参数失效。"
+            error_msg = "❌ 签到异常: 获取网盘成长信息失败，可能是参数失效或被防火墙拦截。"
             print(error_msg)
             return error_msg, False
 
