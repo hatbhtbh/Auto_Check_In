@@ -8,7 +8,7 @@ import re
 import requests
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ---------------- 统一通知模块加载 ----------------
 hadsend = False
@@ -20,17 +20,21 @@ try:
 except ImportError:
     print("⚠️  未加载通知模块，跳过通知功能")
 
-# ---------------- 全局配置项 ----------------
-ENSHAN_COOKIE = os.environ.get('ENSHAN_COOKIE', '')
-max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "3600"))
+# 配置项
+enshan_cookie = os.environ.get('ENSHAN_COOKIE', '')
+max_random_delay = int(os.getenv("MAX_RANDOM_DELAY", "600"))
 random_signin = os.getenv("RANDOM_SIGNIN", "true").lower() == "true"
 privacy_mode = os.getenv("PRIVACY_MODE", "true").lower() == "true"
 
+# 恩山论坛配置
+# 注意：right.com.cn 的路径大小写会影响可访问性；站点实际使用的是 /forum
 BASE_URL = 'https://www.right.com.cn/forum'
 
+# 积分页（用户信息）可能存在不同参数形式；按顺序尝试
 CREDIT_URLS = [
     f'{BASE_URL}/home.php?mod=spacecp&ac=credit',
     f'{BASE_URL}/home.php?mod=spacecp&ac=credit&showcredit=1',
+    # 兼容历史配置（部分环境里曾误写为 /FORUM）
     'https://www.right.com.cn/FORUM/home.php?mod=spacecp&ac=credit',
     'https://www.right.com.cn/FORUM/home.php?mod=spacecp&ac=credit&showcredit=1',
 ]
@@ -51,6 +55,7 @@ def mask_username(username):
     """用户名脱敏处理"""
     if not username:
         return username
+
     if privacy_mode:
         if len(username) <= 2:
             return '*' * len(username)
@@ -74,24 +79,15 @@ def format_time_remaining(seconds):
         return f"{secs}秒"
 
 def wait_with_countdown(delay_seconds, task_name):
-    """带倒计时的随机延迟等待（已修复非10倍数秒时日志不打印的问题）"""
+    """带倒计时的随机延迟等待"""
     if delay_seconds <= 0:
         return
-    
-    eta_time = datetime.now() + timedelta(seconds=delay_seconds)
-    eta_str = eta_time.strftime('%Y-%m-%d %H:%M:%S')
-    
-    print(f"⏰ {task_name} 预计签到时间点: {eta_str}")
     print(f"{task_name} 需要等待 {format_time_remaining(delay_seconds)}")
-    
     remaining = delay_seconds
     while remaining > 0:
-        # 每10秒或者最后10秒内每秒打印一次
-        if remaining <= 10 or remaining % 10 == 0 or remaining == delay_seconds:
-            print(f"{task_name} 倒计时: {format_time_remaining(remaining)} (预计时间: {eta_str})")
-        
-        # 巧妙对齐步长，防止日志断档
-        sleep_time = 1 if remaining <= 10 else (remaining % 10 if remaining % 10 != 0 else 10)
+        if remaining <= 10 or remaining % 10 == 0:
+            print(f"{task_name} 倒计时: {format_time_remaining(remaining)}")
+        sleep_time = 1 if remaining <= 10 else min(10, remaining)
         time.sleep(sleep_time)
         remaining -= sleep_time
 
@@ -110,21 +106,29 @@ def parse_cookies(cookie_str):
     """解析Cookie字符串，支持多账号"""
     if not cookie_str:
         return []
+
+    # 先按换行符分割
     lines = cookie_str.strip().split('\n')
     cookies = []
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
+
+        # 再按&&分割
         parts = line.split('&&')
         for part in parts:
             part = part.strip()
             if part:
                 cookies.append(part)
+
+    # 去重并过滤空值
     unique_cookies = []
     for cookie in cookies:
         if cookie and cookie not in unique_cookies:
             unique_cookies.append(cookie)
+
     return unique_cookies
 
 def extract_number(text):
@@ -132,13 +136,14 @@ def extract_number(text):
     if not text:
         return 0
     try:
+        # 移除所有非数字字符，只保留数字
         number_str = re.sub(r'[^\d]', '', str(text))
         return int(number_str) if number_str else 0
     except (ValueError, TypeError):
         return 0
 
 def extract_first(text, patterns, default=None, flags=0):
-    """按顺序尝试正则，返回第一个匹配到的 group(1)"""
+    """按顺序尝试正则，返回第一个匹配到的 group(1)（strip后）。"""
     for pattern in patterns:
         match = re.search(pattern, text, flags)
         if match:
@@ -156,6 +161,7 @@ class EnShanSigner:
         self.session.headers.update(HEADERS)
         self.session.headers['Cookie'] = cookie
 
+        # 用户信息
         self.user_name = None
         self.user_group = None
         self.coin_before = None
@@ -265,9 +271,15 @@ class EnShanSigner:
         add2 = int(add_nums[1])
 
         shift_nums = re.findall(r"<<\s*(\d+)|>>\s*(\d+)", expr)
-        if len(shift_nums) < 2:
+        shifts = []
+        for left, right in shift_nums:
+            if left:
+                shifts.append(int(left))
+            if right:
+                shifts.append(int(right))
+        if len(shifts) < 2:
             return None
-        rot_l = int(shift_nums[0][0]) if shift_nums[0][0] else int(shift_nums[0][1])
+        rot_l = shifts[0]
         return {
             "upper": upper,
             "add1": add1,
@@ -374,7 +386,10 @@ class EnShanSigner:
     def _get_clearance_headers(self):
         return {
             'User-Agent': HEADERS['User-Agent'],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept': (
+                'text/html,application/xhtml+xml,application/xml;q=0.9,'
+                'image/avif,image/webp,image/apng,*/*;q=0.8'
+            ),
             'Accept-Encoding': 'gzip, deflate, br',
             'Pragma': 'no-cache',
             'Cache-Control': 'no-cache',
@@ -459,6 +474,7 @@ class EnShanSigner:
         return False, "WAF通过后未提取到formhash"
 
     def daily_login(self):
+        """每日登录 - 获取formhash和uid"""
         try:
             print("🔐 正在登录获取参数...")
             clearance_ok, clearance_msg = self._refresh_clearance_cookie()
@@ -488,71 +504,139 @@ class EnShanSigner:
             return False, f"登录过程发生错误: {e}"
 
     def get_user_info(self, is_after=False):
+        """获取用户信息和积分"""
         try:
             print(f"👤 正在获取{'签到后' if is_after else '签到前'}用户信息...")
+
+            # 添加随机延迟
             time.sleep(random.uniform(2, 5))
 
+            # 部分情况下积分页会返回 521（源站/WAF/路径大小写导致），这里做重试并尝试多个候选URL
             response = None
             last_status = None
             for url in CREDIT_URLS:
                 for attempt in range(1, 4):
-                    headers = {**HEADERS, 'Referer': f'{BASE_URL}/forum.php'}
-                    try:
-                        resp = self.session.get(url=url, headers=headers, timeout=20, allow_redirects=True)
-                        last_status = resp.status_code
-                        if resp.status_code == 200 and resp.text:
-                            response = resp
-                            break
-                    except Exception:
-                        pass
+                    headers = {
+                        **HEADERS,
+                        'Referer': f'{BASE_URL}/forum.php',
+                    }
+                    resp = self.session.get(url=url, headers=headers, timeout=20, allow_redirects=True)
+                    last_status = resp.status_code
+                    if resp.status_code == 200 and resp.text:
+                        response = resp
+                        break
 
-                    if last_status in (429, 521) or (last_status and 500 <= last_status < 600):
+                    # 521/5xx/429 等临时性错误：短暂退避后重试
+                    if resp.status_code in (429, 521) or 500 <= resp.status_code < 600:
                         time.sleep(1.5 * attempt + random.uniform(0, 0.8))
                         continue
+
+                    # 其他状态码通常不是临时问题，换下一个URL
                     break
                 if response is not None:
                     break
 
             if response is None:
                 error_msg = f"获取用户信息失败，状态码: {last_status}"
+                print(f"🔍 用户信息响应状态码: {last_status}")
                 print(f"❌ {error_msg}")
                 return False, error_msg
 
-            coin = extract_first(response.text, patterns=[r"恩山币\s*[:：]\s*</em>\s*([^<&\s]+)", r"恩山币\s*[:：]\s*([^<\s]+)\s*币", r"恩山币\s*[:：]\s*([^<\s]+)"], default="0", flags=re.S)
-            point = extract_first(response.text, patterns=[r"积分\s*[:：]\s*</em>\s*([^<&\s]+)", r"<em>\s*积分\s*[:：]\s*</em>\s*([^<\s]+)", r"积分\s*[:：]\s*([^<\s]+)"], default="0", flags=re.S)
+            print(f"🔍 用户信息响应状态码: {response.status_code}")
 
-            if is_after:
-                self.coin_after = coin
-                self.point_after = point
-                print(f"💰 签到后 - 恩山币: {coin}, 积分: {point}")
+            if response.status_code == 200:
+                # 提取积分信息
+                # 页面结构可能随主题变化，使用多套模式兜底
+                coin = extract_first(
+                    response.text,
+                    patterns=[
+                        r"恩山币\s*[:：]\s*</em>\s*([^<&\s]+)",
+                        r"恩山币\s*[:：]\s*([^<\s]+)\s*币",
+                        r"恩山币\s*[:：]\s*([^<\s]+)",
+                    ],
+                    default="0",
+                    flags=re.S,
+                )
+                point = extract_first(
+                    response.text,
+                    patterns=[
+                        r"积分\s*[:：]\s*</em>\s*([^<&\s]+)",
+                        r"<em>\s*积分\s*[:：]\s*</em>\s*([^<\s]+)",
+                        r"积分\s*[:：]\s*([^<\s]+)",
+                    ],
+                    default="0",
+                    flags=re.S,
+                )
+
+                if is_after:
+                    self.coin_after = coin
+                    self.point_after = point
+                    print(f"💰 签到后 - 恩山币: {coin}, 积分: {point}")
+                else:
+                    self.coin_before = coin
+                    self.point_before = point
+                    print(f"💰 签到前 - 恩山币: {coin}, 积分: {point}")
+
+                # 只在第一次获取用户名等信息
+                if not is_after:
+                    self.user_name = extract_first(
+                        response.text,
+                        patterns=[
+                            r'访问我的空间">([^<]+)</a>',
+                            r'class="vwmy"[^>]*>([^<]+)</a>',
+                            r'欢迎您回来\s*,\s*([^<\n]+)',
+                            r'用户名[：:]\s*([^<\n]+)',
+                        ],
+                        default="未知用户",
+                        flags=re.S,
+                    )
+
+                    self.user_group = extract_first(
+                        response.text,
+                        patterns=[
+                            r'用户组\s*[:：]\s*([^<\n]+)</',
+                            r'用户组\s*[:：]\s*([^<\n]+)',
+                        ],
+                        default="未知等级",
+                        flags=re.S,
+                    )
+
+                    self.contribution = extract_first(
+                        response.text,
+                        patterns=[
+                            r'贡献\s*[:：]\s*</em>\s*([^<\s]+)\s*分',
+                            r'贡献\s*[:：]\s*(\d+)',
+                        ],
+                        default="0",
+                        flags=re.S,
+                    )
+
+                    print(f"👤 用户: {mask_username(self.user_name)}")
+                    print(f"🏅 等级: {self.user_group}")
+                    print(f"🎯 贡献: {self.contribution}")
+
+                return True, "用户信息获取成功"
             else:
-                self.coin_before = coin
-                self.point_before = point
-                print(f"💰 签到前 - 恩山币: {coin}, 积分: {point}")
+                error_msg = f"获取用户信息失败，状态码: {response.status_code}"
+                print(f"❌ {error_msg}")
+                return False, error_msg
 
-            if not is_after:
-                self.user_name = extract_first(response.text, patterns=[r'访问我的空间">([^<]+)</a>', r'class="vwmy"[^>]*>([^<]+)</a>', r'欢迎您回来\s*,\s*([^<\n]+)', r'用户名[：:]\s*([^<\n]+)'], default="未知用户", flags=re.S)
-                self.user_group = extract_first(response.text, patterns=[r'用户组\s*[:：]\s*([^<\n]+)</', r'用户组\s*[:：]\s*([^<\n]+)'], default="未知等级", flags=re.S)
-                self.contribution = extract_first(response.text, patterns=[r'贡献\s*[:：]\s*</em>\s*([^<\s]+)\s*分', r'贡献\s*[:：]\s*(\d+)'], default="0", flags=re.S)
-
-                print(f"👤 用户: {mask_username(self.user_name)}")
-                print(f"🏅 等级: {self.user_group}")
-                print(f"🎯 贡献: {self.contribution}")
-
-            return True, "用户信息获取成功"
         except Exception as e:
             error_msg = f"获取用户信息异常: {str(e)}"
             print(f"❌ {error_msg}")
             return False, error_msg
 
     def perform_checkin(self):
+        """执行签到"""
         try:
             print("📝 正在执行签到...")
+
             if not self.formhash:
                 login_ok, login_msg = self.daily_login()
                 if not login_ok:
                     return False, f"请先执行登录获取formhash: {login_msg}"
 
+            # 签到前再刷新一次，降低WAF过期导致的失败
             self._refresh_clearance_cookie()
 
             headers = {
@@ -573,7 +657,9 @@ class EnShanSigner:
             }
 
             data = {"formhash": self.formhash}
+
             response = self.session.post(self.sign_url, headers=headers, data=data, timeout=30)
+            print(f"🔍 签到响应状态码: {response.status_code}")
             response.raise_for_status()
 
             try:
@@ -588,32 +674,58 @@ class EnShanSigner:
 
                 if success is True or status in (1, "1", "success", True):
                     return True, message or "签到成功"
-                if "已签到" in message or "已经签到" in message or "成功" in message:
+                if "已签到" in message or "已经签到" in message:
+                    return True, message
+                if "成功" in message:
                     return True, message
                 if message:
                     return False, f"签到失败: {message}"
             return True, "签到请求已提交"
+
         except Exception as e:
             return False, f"签到异常: {str(e)}"
 
     def main(self):
+        """主执行函数"""
         print(f"\n==== 恩山论坛账号{self.index} 开始签到 ====")
-        if not self.cookie.strip():
-            return "Cookie为空", False
 
+        if not self.cookie.strip():
+            error_msg = """账号配置错误
+
+❌ 错误原因: Cookie为空
+
+🔧 解决方法:
+1. 在青龙面板中添加环境变量enshan_cookie
+2. 多账号用换行分隔或&&分隔
+3. Cookie需要包含完整的登录信息
+
+💡 提示: 请确保Cookie有效且格式正确"""
+            print(f"❌ {error_msg}")
+            return error_msg, False
+
+        # 1. 获取签到前用户信息
         login_success, login_msg = self.daily_login()
         if not login_success:
             return f"登录失败: {login_msg}", False
-        
-        self.get_user_info(is_after=False)
+        user_success, user_msg = self.get_user_info(is_after=False)
+        if not user_success:
+            print(f"⚠️ 获取用户信息失败: {user_msg}")
+
+        # 2. 随机等待
         time.sleep(random.uniform(2, 5))
+
+        # 3. 执行签到
         signin_success, signin_msg = self.perform_checkin()
+
+        # 4. 获取签到后用户信息
         time.sleep(random.uniform(2, 4))
         after_success, after_msg = self.get_user_info(is_after=True)
 
+        # 5. 通过积分变化判断签到是否真的成功
         gain_info = ""
         if after_success and self.coin_before and self.coin_after:
             try:
+                # 修复：清理数据，移除"币"等文字，只保留数字
                 coin_before = extract_number(self.coin_before)
                 coin_after = extract_number(self.coin_after)
                 point_before = extract_number(self.point_before)
@@ -628,18 +740,30 @@ class EnShanSigner:
                     signin_success = True
                     signin_msg = f"签到成功，获得 {coin_gain} 恩山币，{point_gain} 积分"
                     gain_info = f"\n🎁 本次收益: +{coin_gain} 恩山币, +{point_gain} 积分"
+                    print(f"✅ 通过积分变化确认签到成功: +{coin_gain} 恩山币, +{point_gain} 积分")
                 elif coin_gain == 0 and point_gain == 0:
+                    # 积分没变化，可能已经签到过了
                     signin_success = True
                     signin_msg = "今日已签到（积分无变化）"
+                    print("📅 积分无变化，今日已签到")
+                else:
+                    print("⚠️ 积分变化异常，但仍认为签到成功")
+                    signin_success = True
+
             except Exception as e:
                 print(f"⚠️ 积分变化计算异常: {e}")
+                # 如果积分计算失败，使用原始签到结果
+                print("🔄 使用原始签到结果")
 
+        # 6. 组合结果消息
         final_msg = f"""🌟 恩山论坛签到结果
+
     👤 用户: {mask_username(self.user_name) or '未知用户'}
     🏅 等级: {self.user_group or '未知等级'}
     💰 恩山币: {self.coin_before or '未知'} → {self.coin_after or self.coin_before or '未知'}
     📊 积分: {self.point_before or '未知'} → {self.point_after or self.point_before or '未知'}
     🎯 贡献: {self.contribution or '0'} 分{gain_info}
+
     📝 签到: {signin_msg}
     ⏰ 时间: {datetime.now().strftime('%m-%d %H:%M')}"""
 
@@ -647,35 +771,70 @@ class EnShanSigner:
         return final_msg, signin_success
 
 def main():
+    """主程序入口"""
     print(f"==== 恩山论坛签到开始 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ====")
+
+    # 显示配置状态
     print(f"🔒 隐私保护模式: {'已启用' if privacy_mode else '已禁用'}")
 
+    # 随机延迟（整体延迟）
     if random_signin:
         delay_seconds = random.randint(0, max_random_delay)
         if delay_seconds > 0:
+            print(f"🎲 随机延迟: {format_time_remaining(delay_seconds)}")
             wait_with_countdown(delay_seconds, "恩山论坛签到")
 
-    if not ENSHAN_COOKIE:
-        print("❌ 未找到 ENSHAN_COOKIE 环境变量")
+    # 获取Cookie配置
+    if not enshan_cookie:
+        error_msg = """❌ 未找到enshan_cookie环境变量
+
+🔧 配置方法:
+1. enshan_cookie: 恩山论坛Cookie
+2. 多账号用换行分隔或&&分隔
+3. Cookie需要包含完整的登录信息
+
+示例:
+单账号: enshan_cookie=完整的Cookie字符串
+多账号: enshan_cookie=cookie1&&cookie2 或换行分隔
+
+💡 提示: 登录恩山论坛后，F12复制完整Cookie"""
+
+        print(error_msg)
+        notify_user("恩山论坛签到失败", error_msg)
         return
 
-    cookies = parse_cookies(ENSHAN_COOKIE)
+    # 使用Cookie解析函数
+    cookies = parse_cookies(enshan_cookie)
+
     if not cookies:
-        print("❌ Cookie解析失败")
+        error_msg = """❌ Cookie解析失败
+
+🔧 可能原因:
+1. Cookie格式不正确
+2. Cookie为空或只包含空白字符
+3. 分隔符使用错误
+
+💡 请检查enshan_cookie环境变量的值"""
+
+        print(error_msg)
+        notify_user("恩山论坛签到失败", error_msg)
         return
 
     print(f"📝 共发现 {len(cookies)} 个账号")
+
     success_count = 0
     total_count = len(cookies)
     results = []
 
     for index, cookie in enumerate(cookies):
         try:
+            # 账号间随机等待
             if index > 0:
                 delay = random.uniform(10, 20)
                 print(f"⏱️  随机等待 {delay:.1f} 秒后处理下一个账号...")
                 time.sleep(delay)
 
+            # 执行签到
             signer = EnShanSigner(cookie, index + 1)
             result_msg, is_success = signer.main()
 
@@ -689,23 +848,39 @@ def main():
                 'username': mask_username(signer.user_name) if signer.user_name else f"账号{index + 1}"
             })
 
+            # 发送单个账号通知
             status = "成功" if is_success else "失败"
-            notify_user(f"恩山论坛账号{index + 1}签到{status}", result_msg)
+            title = f"恩山论坛账号{index + 1}签到{status}"
+            notify_user(title, result_msg)
 
         except Exception as e:
             error_msg = f"账号{index + 1}: 执行异常 - {str(e)}"
             print(f"❌ {error_msg}")
+            notify_user(f"恩山论坛账号{index + 1}签到失败", error_msg)
 
+    # 发送汇总通知
     if total_count > 1:
         summary_msg = f"""📊 恩山论坛签到汇总
+
 📈 总计: {total_count}个账号
 ✅ 成功: {success_count}个
 ❌ 失败: {total_count - success_count}个
 📊 成功率: {success_count/total_count*100:.1f}%
 ⏰ 完成时间: {datetime.now().strftime('%m-%d %H:%M')}"""
+
+        # 添加详细结果（最多显示5个账号的详情）
+        if len(results) <= 5:
+            summary_msg += "\n\n📋 详细结果:"
+            for result in results:
+                status_icon = "✅" if result['success'] else "❌"
+                summary_msg += f"\n{status_icon} {result['username']}"
+
         notify_user("恩山论坛签到汇总", summary_msg)
 
+    print(f"\n==== 恩山论坛签到完成 - 成功{success_count}/{total_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ====")
+
 def handler(event, context):
+    """云函数入口"""
     main()
 
 if __name__ == "__main__":
