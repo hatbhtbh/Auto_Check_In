@@ -33,7 +33,7 @@ def sign(NODESEEK_COOKIE, ns_random):
     }
     try:
         url = f"https://www.nodeseek.com/api/attendance?random={ns_random}"
-        response = requests.post(url, headers=headers, impersonate="chrome110")
+        response = requests.post(url, headers=headers, impersonate="chrome120")
         data = response.json()
         msg = data.get("message", "")
         if "鸡腿" in msg or data.get("success"):
