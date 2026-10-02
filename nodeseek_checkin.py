@@ -33,7 +33,7 @@ def sign(NODESEEK_COOKIE, ns_random):
     }
     try:
         url = f"https://www.nodeseek.com/api/attendance?random={ns_random}"
-        response = requests.post(url, headers=headers, impersonate="chrome")
+        response = requests.post(url, headers=headers, impersonate="chrome110")
         data = response.json()
         msg = data.get("message", "")
         if "鸡腿" in msg or data.get("success"):
@@ -76,7 +76,7 @@ def get_signin_stats(NODESEEK_COOKIE, days=30):
         
         while page <= 10:  # 最多查询10页
             url = f"https://www.nodeseek.com/api/account/credit/page-{page}"
-            response = requests.get(url, headers=headers, impersonate="chrome")
+            response = requests.get(url, headers=headers, impersonate="chrome110")
             data = response.json()
             
             if not data.get("success") or not data.get("data"):
